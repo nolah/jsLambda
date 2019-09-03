@@ -40,4 +40,6 @@ function heapSort(input) {
 
         heap_root(input, 0);
     }
+
+    return input;
 }

@@ -12,19 +12,12 @@ object Script {
 
 class Script(val name: String, val script: String) extends Actor {
 
-  val jsContext = org.mozilla.javascript.Context.enter()
-  val scope = jsContext.initStandardObjects()
-  jsContext.evaluateString(scope, script, "jsCode", 0, null)
+  val coordinator = context.actorOf(ScriptExecutionCoordinator.props("coordinator", script), "coordinator")
 
   override def receive: Receive = {
 
     case message: ExecuteScript => {
-
-      val a = 3
-      val result = jsContext.evaluateString(scope, message.expression, "inline", 1, null).toString
-      println(result)
-      val resultAsString = if (result == null) null else result.toString
-      sender forward ExecutionResult(Some(resultAsString), None)
+      coordinator forward message
     }
   }
 

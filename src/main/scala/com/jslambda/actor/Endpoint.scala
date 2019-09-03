@@ -27,7 +27,7 @@ class Endpoint(scriptCollection: ActorRef, timeout: Timeout, materializer: Actor
   //  implicit def executionContext: ExecutionContextExecutor = system.dispatcher
 
   implicit val registerScriptFormat = jsonFormat1(RegisterScript)
-  implicit val executeScriptFormat = jsonFormat2(ExecuteScript)
+  implicit val executeScriptFormat = jsonFormat3(ExecuteScript)
   implicit val registerScriptResponseFormat = jsonFormat1(RegisterScriptResponse)
   implicit val executeExpressionResponse = jsonFormat1(ExecuteExpressionResponse)
 
@@ -76,7 +76,8 @@ class Endpoint(scriptCollection: ActorRef, timeout: Timeout, materializer: Actor
                     complete(InternalServerError)
                 }
               }
-              case _ => {
+              case fail => {
+                println(fail)
                 complete(InternalServerError)
               }
             }

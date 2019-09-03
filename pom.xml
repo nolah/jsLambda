@@ -162,6 +162,7 @@
                 <filtering>false</filtering>
                 <includes>
                     <include>**/*.properties</include>
+                    <include>**/*.conf</include>
                     <include>**/*.xml</include>
                     <include>**/*.jpg</include>
                 </includes>
