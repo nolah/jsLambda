@@ -1,7 +1,8 @@
 package com.jslambda.manager
 
-import java.io.{File, FileWriter}
-import java.util.UUID
+import java.io.{File, FileWriter, FilenameFilter}
+import java.nio.file.{Files, Paths, StandardOpenOption}
+import java.util.{Scanner, UUID}
 
 import akka.actor.{Actor, ActorLogging, ActorRef, Props}
 import akka.cluster.{Cluster, MemberStatus}
@@ -9,7 +10,7 @@ import akka.cluster.ClusterEvent._
 import akka.cluster.pubsub.DistributedPubSub
 import akka.cluster.pubsub.DistributedPubSubMediator.{Publish, Subscribe, SubscribeAck}
 import com.jslambda.coordinator.{RegisterScript, ScriptRegistered}
-import com.jslambda.manager.SuperClusterManager.{CoordinatorJoined, ExecutionerJoined, NewMemberIdentifyYourself}
+import com.jslambda.manager.SuperClusterManager.{CoordinatorJoined, ExecutionerJoined, NewMemberIdentifyYourself, RestoreSubcluster}
 
 object SuperClusterManager {
 
@@ -25,16 +26,24 @@ object SuperClusterManager {
 
   case class ExecutionerRecognized(uuid: String)
 
+  case class RestoreSubcluster(uuid: String, script: String, startingTcpPort: Int, httpPort: Int, minExecutors: Int)
+
 }
 
 class SuperClusterManager(name: String, storageDir: String) extends Actor with ActorLogging {
   private val mediator = DistributedPubSub(context.system).mediator
+
+  val portsFile = new File(storageDir + "ports")
+
+  var (nextTcpPort, nextHttpPort) = readPortsFile(portsFile)
 
   mediator ! Subscribe("cluster-bus", self)
 
   Cluster(context.system).subscribe(self, classOf[ClusterDomainEvent])
 
   val physicalNodeManager = context.actorOf(PhysicalNodeManager.props("physical-node-manager"), "physical-node-manager")
+
+  restoreCluster
 
   def receive = {
     case s: String =>
@@ -67,7 +76,10 @@ class SuperClusterManager(name: String, storageDir: String) extends Actor with A
       log.info("CurrentClusterState: {}.", state)
 
     case message: RegisterScript =>
-      sender forward ScriptRegistered(createClusterManager(message.script, message.minimumNodes))
+      sender forward createClusterManager(message.script, nextTcpPort, nextHttpPort, message.minimumNodes)
+      val (nextTcp, nextHttp) = updatePortsFile(portsFile, nextTcpPort, nextHttpPort)
+      nextTcpPort = nextTcp
+      nextHttpPort = nextHttp
     case message: CoordinatorJoined =>
       context.child(message.uuid) match {
         case Some(child) =>
@@ -85,16 +97,63 @@ class SuperClusterManager(name: String, storageDir: String) extends Actor with A
 
   }
 
+  def readPortsFile(portsFile: File): (Int, Int) = {
+    val scanner = new Scanner(portsFile)
+    val nextTcpPort = scanner.nextInt()
+    val nextHttpPort = scanner.nextInt()
+    (nextTcpPort, nextHttpPort)
+  }
 
-  def createClusterManager(script: String, minExecutors: Int): String = {
+  def updatePortsFile(portsFile: File, nextTcpPort: Int, nextHttpPort: Int): (Int, Int) = {
+    // empty the file
+    Files.newInputStream(Paths.get(portsFile.getPath), StandardOpenOption.TRUNCATE_EXISTING)
+    val fileWriter = new FileWriter(portsFile)
+    fileWriter.write(nextTcpPort.toString)
+    fileWriter.write("\n")
+    fileWriter.write(nextHttpPort.toString)
+    fileWriter.close
+    log.info("Updated ports file: {}", portsFile.getAbsolutePath)
+    (nextTcpPort + 100, nextHttpPort + 100)
+  }
+
+  def createClusterManager(script: String, nextTcpPort: Int, nextHttpPort: Int, minExecutors: Int): ScriptRegistered = {
     val uuid = UUID.randomUUID().toString
-    val file = new File(storageDir + uuid + ".script")
-    val fileWriter = new FileWriter(file)
+    val scriptFile = new File(storageDir + uuid + ".script")
+    val fileWriter = new FileWriter(scriptFile)
+    fileWriter.append(s"$nextTcpPort, $nextHttpPort, $minExecutors")
+    fileWriter.append("\n")
     fileWriter.append(script)
     fileWriter.close
-    log.info("Created script file: {}", file.getAbsolutePath)
-    context.actorOf(ClusterManager.props(uuid, script, minExecutors), uuid)
-    uuid
+    log.info("Created script file: {}", scriptFile.getAbsolutePath)
+
+    context.actorOf(ClusterManager.props(uuid, script, nextTcpPort, nextHttpPort, minExecutors), uuid)
+    ScriptRegistered(uuid, "localhost:" + nextHttpPort)
+  }
+
+  def restoreCluster(): Unit = {
+    log.info("Restoring cluster!")
+    val storage = new File(storageDir)
+    val fileNames = storage.list(new FilenameFilter {
+      override def accept(dir: File, name: String): Boolean = name.matches(".*\\.script")
+    })
+
+    fileNames.foreach(f => {
+      val uuid = f.take(36)
+      val scriptFile = new String(Files.readAllBytes(Paths.get(storageDir + f)))
+      val indexOfFirstLineBreak = scriptFile.indexOf("\n")
+      val statsLine = scriptFile.take(indexOfFirstLineBreak)
+      val script = scriptFile.substring(indexOfFirstLineBreak + 1)
+      val stats = statsLine.split(",").map(_.trim.toInt)
+      val tcpPort = stats(0)
+      val httpPort = stats(1)
+      val minExecutors = stats(2)
+
+      context.actorOf(ClusterManager.props(uuid, script, tcpPort, httpPort, minExecutors), uuid)
+      log.info("Starting ClusterManager: uuid: {}, tcpPort: {}, httpPort: {}, minExecutors: {}", uuid, tcpPort, httpPort, minExecutors)
+
+    })
+
+
   }
 
 }

@@ -26,7 +26,7 @@ class RegistrationHttp(superClusterManager: ActorRef, timeout: Timeout, material
   //  implicit def executionContext: ExecutionContextExecutor = system.dispatcher
 
   implicit val registerScriptFormat = jsonFormat2(RegisterScript)
-  implicit val registerScriptResponseFormat = jsonFormat1(RegisterScriptResponse)
+  implicit val registerScriptResponseFormat = jsonFormat2(RegisterScriptResponse)
   implicit val executeExpressionResponse = jsonFormat1(ExecuteExpressionResponse)
 
 
@@ -42,8 +42,8 @@ class RegistrationHttp(superClusterManager: ActorRef, timeout: Timeout, material
             onComplete(superClusterManager ? registerScript) {
               case Success(success) => {
                 success match {
-                  case ScriptRegistered(uuid) =>
-                    complete(OK, RegisterScriptResponse(uuid))
+                  case ScriptRegistered(uuid, url) =>
+                    complete(OK, RegisterScriptResponse(uuid, url))
                   case _ =>
                     complete(InternalServerError)
                 }
@@ -91,7 +91,7 @@ class RegistrationHttp(superClusterManager: ActorRef, timeout: Timeout, material
 }
 
 case class RegisterScript(script: String, minimumNodes: Int)
-case class ScriptRegistered(uuid: String)
+case class ScriptRegistered(uuid: String, url: String)
 
-case class RegisterScriptResponse(uuid: String)
+case class RegisterScriptResponse(uuid: String, url: String)
 case class ExecuteExpressionResponse(result: String)

@@ -13,7 +13,6 @@ import com.jslambda.coordinator.{Coordinator, CoordinatorActor}
 import com.jslambda.manager.Manager
 //import com.jslambda.coordinator.{Coordinator, Endpoint}
 import com.jslambda.executioner.Executioner
-import com.jslambda.registration.Registration
 import com.typesafe.config.{Config, ConfigFactory}
 
 import scala.concurrent.Future
@@ -29,7 +28,7 @@ object Main extends App {
 
   val port = args.find(arg => arg.startsWith("-DPORT")) match {
     case Some(x) => x.substring("-DPORT".length + 1).toInt
-    case None => 2551
+    case None => 2400
   }
 
   val configFileName = nodeType + ".conf"

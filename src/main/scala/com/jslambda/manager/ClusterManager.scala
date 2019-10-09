@@ -12,7 +12,7 @@ import scala.collection.mutable.Set
 import scala.concurrent.duration.FiniteDuration
 
 object ClusterManager {
-  def props(uuid: String, script: String, minExecutors: Int) = Props(new ClusterManager(uuid, script, minExecutors))
+  def props(uuid: String, script: String, startingTcpPort: Int, httpPort: Int, minExecutors: Int) = Props(new ClusterManager(uuid, script, startingTcpPort, httpPort, minExecutors))
 
   case class AddNewExecutioners(additions: Int, uuid: String)
 
@@ -22,12 +22,12 @@ object ClusterManager {
 
 }
 
-class ClusterManager(uuid: String, script: String, minExecutors: Int) extends Actor with ActorLogging {
+class ClusterManager(uuid: String, script: String, startingTcpPort: Int, httpPort: Int, minExecutors: Int) extends Actor with ActorLogging {
 
   implicit val ec = context.dispatcher
   implicit val timeout: Timeout = FiniteDuration(10, java.util.concurrent.TimeUnit.SECONDS)
 
-  val nodeProvider = context.actorOf(NodeProvider.props("node-provider", uuid, minExecutors), "node-provider")
+  val nodeProvider = context.actorOf(NodeProvider.props("node-provider", uuid, startingTcpPort, httpPort, minExecutors), "node-provider")
   nodeProvider ! StartCluster(minExecutors, uuid)
 
   var coordinatorRef: Option[ActorRef] = None

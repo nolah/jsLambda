@@ -3,7 +3,6 @@ package com.jslambda.coordinator
 import akka.actor.ActorSystem
 import akka.event.LoggingAdapter
 import akka.http.scaladsl.Http
-import akka.remote.WireFormats.TimeUnit
 import akka.stream.ActorMaterializer
 import com.jslambda.coordinator.CoordinatorActor.CheckStatus
 
@@ -24,6 +23,13 @@ object Coordinator {
         log.error("No uuid found while starting coordinator, shutting down!")
         throw new RuntimeException("No uuid found while starting coordinator, shutting down!")
     }
+    val httpPort = args.find(arg => arg.startsWith("http-port")) match {
+      case Some(uuidParam) =>
+        uuidParam.substring("http-port".length + 1).toInt
+      case None =>
+        log.error("No http-port found while starting coordinator, shutting down!")
+        throw new RuntimeException("No http-port found while starting coordinator, shutting down!")
+    }
 
     log.info("Starting coordinator with uuid: {}", uuid)
 
@@ -37,7 +43,8 @@ object Coordinator {
     val api = new ExecutionHttp(coordinatorActor, interval, materializer)
 
     //    val bindingFuture: Future[ServerBinding] =
-    Http().bindAndHandle(api.routes, "localhost", 9001)
+    Http().bindAndHandle(api.routes, "localhost", httpPort)
+    log.info("Starting coordinator on port: {}", httpPort)
 
   }
 
