@@ -9,8 +9,9 @@ import akka.cluster.{Cluster, MemberStatus}
 import akka.cluster.ClusterEvent._
 import akka.cluster.pubsub.DistributedPubSub
 import akka.cluster.pubsub.DistributedPubSubMediator.{Publish, Subscribe, SubscribeAck}
+import com.jslambda.coordinator.CoordinatorActor.ExecutionerDetails
 import com.jslambda.coordinator.{RegisterScript, ScriptRegistered}
-import com.jslambda.manager.SuperClusterManager.{CoordinatorJoined, ExecutionerJoined, NewMemberIdentifyYourself, RestoreSubcluster}
+import com.jslambda.manager.SuperClusterManager._
 
 object SuperClusterManager {
 
@@ -18,7 +19,7 @@ object SuperClusterManager {
 
   case class CoordinatorJoined(uuid: String, actorRef: ActorRef)
 
-  case class CoordinatorRecognized(uuid: String)
+  case class CoordinatorRecognized(uuid: String, executioners: List[ActorRef])
 
   case class NewMemberIdentifyYourself(ninja: String)
 
@@ -28,73 +29,57 @@ object SuperClusterManager {
 
   case class RestoreSubcluster(uuid: String, script: String, startingTcpPort: Int, httpPort: Int, minExecutors: Int)
 
+  case class StartSubcluster(uuid: String, script: String, tcpPort: Int, httpPort: Int, minExecutors: Int)
+
+
 }
 
 class SuperClusterManager(name: String, storageDir: String) extends Actor with ActorLogging {
-  private val mediator = DistributedPubSub(context.system).mediator
 
   val portsFile = new File(storageDir + "ports")
 
-  var (nextTcpPort, nextHttpPort) = readPortsFile(portsFile)
+  var subClusterManagers = Map[Int, ActorRef]()
 
-  mediator ! Subscribe("cluster-bus", self)
+  var (nextTcpPort, nextHttpPort) = readPortsFile(portsFile)
 
   Cluster(context.system).subscribe(self, classOf[ClusterDomainEvent])
 
-  val physicalNodeManager = context.actorOf(PhysicalNodeManager.props("physical-node-manager"), "physical-node-manager")
+  val nodeProviderRef = context.actorOf(NodeProvider.props(), "node-provider")
 
-  restoreCluster
+  restoreCluster()
 
   def receive = {
-    case s: String =>
-      log.info("Got {}", s)
-    case SubscribeAck(Subscribe("content", None, `self`)) =>
-      log.info("subscribing")
-    case MemberJoined(member) =>
-      log.info("MemberJoined: {}.", member)
-    case MemberUp(member) =>
-      log.info("MemberUp: {}.", member)
-      physicalNodeManager forward MemberUp(member)
-      Thread.sleep(1000)
-      log.info("Publishing NewMemberIdentifyYourself")
-      mediator ! Publish("cluster-bus", NewMemberIdentifyYourself("42"))
-    case MemberWeaklyUp(member) =>
-      log.info("MemberWeaklyUp: {}.", member)
-    case MemberExited(member) =>
-      log.info("MemberExited: {}.", member)
-    case MemberRemoved(member, previousState) =>
-      if (previousState == MemberStatus.Exiting) {
-        log.info("Member {} Previously gracefully exited, REMOVED.", member)
-      } else {
-        log.info("Member {} Previously downed after unreachable, REMOVED.", member)
-      }
-    case UnreachableMember(member) =>
-      log.info("UnreachableMember: {}.", member)
-    case ReachableMember(member) =>
-      log.info("ReachableMember: {}.", member)
     case state: CurrentClusterState =>
       log.info("CurrentClusterState: {}.", state)
+
+    case message: MemberEvent =>
+      log.info("MemberEvent: {}.", message)
+      message.member.address.port match {
+        case Some(port) =>
+          val range: Int = port / 100
+          val startingPort: Int = range * 100
+          subClusterManagers.get(startingPort) match {
+            case Some(subClusterManager) =>
+              subClusterManager forward message
+            case None =>
+              log.error("Received MemberEvent for member that has no subcluster associated with it, port: {}", port)
+          }
+        case None =>
+          log.error("Received MemberEvent for member without a port!")
+      }
+
 
     case message: RegisterScript =>
       sender forward createClusterManager(message.script, nextTcpPort, nextHttpPort, message.minimumNodes)
       val (nextTcp, nextHttp) = updatePortsFile(portsFile, nextTcpPort, nextHttpPort)
       nextTcpPort = nextTcp
       nextHttpPort = nextHttp
-    case message: CoordinatorJoined =>
-      context.child(message.uuid) match {
-        case Some(child) =>
-          log.info("CoordinatorJoined: {}", message)
-          child forward message
-        case None => log.error("Unknown coordinator is trying to join cluster!")
-      }
-    case message: ExecutionerJoined =>
-      context.child(message.uuid) match {
-        case Some(child) =>
-          log.info("ExecutionerJoined: {}", message)
-          child forward message
-        case None => log.error("Unknown executioner is trying to join cluster!")
-      }
 
+    case message: StartSubcluster =>
+      val subCluster = context.actorOf(SubClusterManager.props(message.uuid, message.script, message.tcpPort, message.httpPort, message.minExecutors, nodeProviderRef), message.uuid)
+      subClusterManagers += (message.tcpPort -> subCluster)
+      log.info("Starting ClusterManager: uuid: {}, tcpPort: {}, httpPort: {}, minExecutors: {}", message.uuid, message.tcpPort, message.httpPort, message.minExecutors)
+//      Thread.sleep(10000)
   }
 
   def readPortsFile(portsFile: File): (Int, Int) = {
@@ -126,7 +111,8 @@ class SuperClusterManager(name: String, storageDir: String) extends Actor with A
     fileWriter.close
     log.info("Created script file: {}", scriptFile.getAbsolutePath)
 
-    context.actorOf(ClusterManager.props(uuid, script, nextTcpPort, nextHttpPort, minExecutors), uuid)
+    val subCluster = context.actorOf(SubClusterManager.props(uuid, script, nextTcpPort, nextHttpPort, minExecutors, nodeProviderRef), uuid)
+    subClusterManagers += (nextTcpPort -> subCluster)
     ScriptRegistered(uuid, "localhost:" + nextHttpPort)
   }
 
@@ -148,12 +134,18 @@ class SuperClusterManager(name: String, storageDir: String) extends Actor with A
       val httpPort = stats(1)
       val minExecutors = stats(2)
 
-      context.actorOf(ClusterManager.props(uuid, script, tcpPort, httpPort, minExecutors), uuid)
-      log.info("Starting ClusterManager: uuid: {}, tcpPort: {}, httpPort: {}, minExecutors: {}", uuid, tcpPort, httpPort, minExecutors)
+      self ! StartSubcluster(uuid, script, tcpPort, httpPort, minExecutors)
 
-    })
+  })
 
 
   }
 
 }
+
+
+//class SystemStarter extends Actor with ActorLogging {
+//  override def receive: Receive = {
+//    case x =>
+//  }
+//}

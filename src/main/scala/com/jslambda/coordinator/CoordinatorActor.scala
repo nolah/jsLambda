@@ -1,17 +1,20 @@
 package com.jslambda.coordinator
 
 import java.time.ZonedDateTime
+import java.util.concurrent.TimeUnit
 
-import akka.actor.{Actor, ActorLogging, ActorRef, Props}
+import akka.actor.{Actor, ActorLogging, ActorRef, Cancellable, Props}
+import akka.cluster.Cluster
 import akka.cluster.pubsub.DistributedPubSub
 import akka.cluster.pubsub.DistributedPubSubMediator.{Publish, Subscribe, SubscribeAck}
-import com.jslambda.coordinator.CoordinatorActor.{AdjustClusterSize, CheckStatus, ExecutionerDetails, ExecutionersRemoved}
+import com.jslambda.coordinator.CoordinatorActor._
 import com.jslambda.executioner.ScriptExecutioner.{ExecutionDone, ManagedExecuteScript}
-import com.jslambda.manager.ClusterManager.RemoveExecs
+import com.jslambda.manager.SubClusterManager.RemoveExecs
 import com.jslambda.manager.SuperClusterManager.{CoordinatorJoined, CoordinatorRecognized, ExecutionerJoined, NewMemberIdentifyYourself}
 
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
+import scala.concurrent.duration.FiniteDuration
 
 
 object CoordinatorActor {
@@ -25,6 +28,8 @@ object CoordinatorActor {
 
   case class ExecutionersRemoved(numberOfExecsRemoved: Int, execs: List[ActorRef])
 
+  case class ConnectToManager()
+
   val rampUpRate = 0.25
   val backOffRate = 0.1
   val avgStartupTime = 5000
@@ -32,6 +37,8 @@ object CoordinatorActor {
 }
 
 class CoordinatorActor(name: String, uuid: String) extends Actor with ActorLogging {
+  implicit val ec = context.dispatcher
+
   private var recognized = false
 
   var executioners = Map[ActorRef, ExecutionerDetails]()
@@ -52,11 +59,24 @@ class CoordinatorActor(name: String, uuid: String) extends Actor with ActorLoggi
 
   private val mediator = DistributedPubSub(context.system).mediator
 
-  mediator ! Subscribe("cluster-bus", self)
+  mediator ! Subscribe(uuid + "-bus", self)
+
+  val connectToManagerSchedule: Cancellable = context.system.scheduler.schedule(FiniteDuration(1, TimeUnit.SECONDS), FiniteDuration(1, TimeUnit.SECONDS), self, ConnectToManager())
 
   override def receive: Receive = {
+    case _: ConnectToManager =>
+      log.info("ConnectToManager")
+      if (!recognized) {
+        log.info("Publishing CoordinatorJoined: {}", CoordinatorJoined(uuid, self))
+        mediator ! Publish(uuid + "-bus", CoordinatorJoined(uuid, self))
+      } else {
+        log.info("Node recognized, shutting down scheduled task")
+        connectToManagerSchedule.cancel()
+      }
+
+
     case _: CheckStatus =>
-      log.info("Status check")
+      log.info("CheckStatus")
 
       // drop stale executions
       pendingExecutions = dropStaleExecutions(pendingExecutions)
@@ -70,18 +90,17 @@ class CoordinatorActor(name: String, uuid: String) extends Actor with ActorLoggi
         avgExecutionTimeInMs = None
       }
 
-      if (avgExecutionTimeInMs.isDefined) {
-        // calculate preferred number of executioners
-        val nodes = executioners.size
-        val enqueued = pendingExecutions.length
-        val timeSinceLastStatusUpdate = lastStatusUpdate.map(x => Math.max(System.currentTimeMillis() - x, 5000).toInt).getOrElse(5000)
+      // calculate preferred number of executioners
+      val nodes = executioners.size
+      val enqueued = pendingExecutions.length
+      val timeSinceLastStatusUpdate = lastStatusUpdate.map(x => Math.max(System.currentTimeMillis() - x, 5000).toInt).getOrElse(5000)
 
-        val preferredNumberOfExecutioners = adjustClusterSize(timeSinceLastStatusUpdate, nodes, avgExecutionTimeInMs.get, enqueued)
+      val preferredNumberOfExecutioners = adjustClusterSize(timeSinceLastStatusUpdate, nodes, avgExecutionTimeInMs.getOrElse(0), enqueued)
 
-        clusterManager ! AdjustClusterSize(preferredNumberOfExecutioners, uuid)
-      }
+      clusterManager ! AdjustClusterSize(preferredNumberOfExecutioners, uuid)
 
       lastStatusUpdate = Some(System.currentTimeMillis)
+
     case message: RemoveExecs =>
       log.info("RemoveExecs: {}", message)
       log.info("RemoveExecs: current state: {}", executioners.size)
@@ -94,6 +113,8 @@ class CoordinatorActor(name: String, uuid: String) extends Actor with ActorLoggi
       log.info("CoordinatorRecognized: {}", message)
       recognized = true
       clusterManager = sender
+      executioners = executioners.empty
+      message.executioners.foreach(e => executioners += (e -> ExecutionerDetails(true, ZonedDateTime.now())))
 
     case SubscribeAck(Subscribe("cluster-bus", None, `self`)) =>
       log.info("SubscribeAck")
@@ -108,21 +129,15 @@ class CoordinatorActor(name: String, uuid: String) extends Actor with ActorLoggi
       log.info("ExecutionerJoined: {}", message)
       executioners += (message.actorRef -> ExecutionerDetails(true, ZonedDateTime.now()))
       log.info("ExecutionerJoined: new state: {}", executioners.size)
-    //      if (startNewExecutionerTime.isDefined) {
-    //        log.info("Executioner startup took: {}", System.currentTimeMillis - startNewExecutionerTime.get)
-    //        log.info("Executioner startup took: {}", System.currentTimeMillis - startNewExecutionerTime.get)
-    //        log.info("Executioner startup took: {}", System.currentTimeMillis - startNewExecutionerTime.get)
-    //        log.info("Executioner startup took: {}", System.currentTimeMillis - startNewExecutionerTime.get)
-    //        log.info("Executioner startup took: {}", System.currentTimeMillis - startNewExecutionerTime.get)
-    //        log.info("Executioner startup took: {}", System.currentTimeMillis - startNewExecutionerTime.get)
-    //      }
 
     case message: ExecuteExpression => {
-      //      if (pendingExecutions.length > 2 * executioners.size) {
-      //    // ask for more executioners
-      //      }
-
-      log.info("ExecuteExpression, {}", message)
+      log.info("ExecuteExpression, {}", message.function)
+      if (message.function.equals("shutdown_actor_coordinator")) {
+        throw new RuntimeException
+      } else if (message.function.equals("shutdown_actor_coordinator")) {
+        val cluster = Cluster(context.system)
+        cluster.leave(cluster.selfAddress)
+      }
       findFreeExecutioner(executioners) match {
         case Some((executioner, _)) =>
           executioners += (executioner -> ExecutionerDetails(false, ZonedDateTime.now()))
@@ -131,6 +146,7 @@ class CoordinatorActor(name: String, uuid: String) extends Actor with ActorLoggi
           pendingExecutions.enqueue(ManagedExecuteScript(message, sender, System.currentTimeMillis))
       }
     }
+
     case message: ExecutionDone =>
       log.info("ExecutionDone: {}", message)
       executionsDone += message
@@ -140,6 +156,7 @@ class CoordinatorActor(name: String, uuid: String) extends Actor with ActorLoggi
         val execution = pendingExecutions.dequeue
         sender ! execution
       }
+
   }
 
   def findFreeExecutioner(executioners: Map[ActorRef, ExecutionerDetails]): Option[(ActorRef, ExecutionerDetails)] = {
@@ -156,14 +173,12 @@ class CoordinatorActor(name: String, uuid: String) extends Actor with ActorLoggi
 
   def adjustClusterSize(timeSinceLastStatusUpdate: Int, nodes: Int, avgExecutionTime: Int, enqueued: Int): Int = {
     log.info("adjustClusterSize: timeSinceLastUpate: {}, nodes: {}, avgExecutionTime: {}, enqueue: {}", timeSinceLastStatusUpdate, nodes, avgExecutionTime, enqueued)
-    if (avgExecutionTime == 0) {
-      return nodes
-    }
 
-    if (timeSinceLastStatusUpdate / avgExecutionTime * 0.8 * nodes < enqueued) {
-      Math.ceil(nodes * (1 + CoordinatorActor.rampUpRate)).toInt
-    } else if (timeSinceLastStatusUpdate / avgExecutionTime * nodes * 0.8 * 0.7 > enqueued) {
+
+    if (avgExecutionTime == 0 || timeSinceLastStatusUpdate / avgExecutionTime * nodes * 0.8 * 0.7 > enqueued) {
       Math.floor(nodes * (1 - CoordinatorActor.backOffRate)).toInt
+    } else if (timeSinceLastStatusUpdate / avgExecutionTime * 0.8 * nodes < enqueued) {
+      Math.ceil(nodes * (1 + CoordinatorActor.rampUpRate)).toInt
     } else {
       nodes
     }

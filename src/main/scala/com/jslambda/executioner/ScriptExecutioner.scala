@@ -1,16 +1,20 @@
 package com.jslambda.executioner
 
 import java.time.ZonedDateTime
+import java.util.concurrent.TimeUnit
 
-import akka.actor.{Actor, ActorLogging, ActorRef, Props}
+import akka.actor.{Actor, ActorLogging, ActorRef, Cancellable, Props}
 import akka.cluster.Cluster
 import akka.cluster.pubsub.DistributedPubSub
 import akka.cluster.pubsub.DistributedPubSubMediator.{Publish, Subscribe, SubscribeAck}
+import com.jslambda.coordinator.CoordinatorActor.ConnectToManager
 import com.jslambda.coordinator.ExecuteExpression
 import com.jslambda.executioner.ScriptExecutioner.{ExecutionDone, ExecutionResult, ManagedExecuteScript}
-import com.jslambda.manager.ClusterManager.ExecutionerShutdown
+import com.jslambda.manager.SubClusterManager.ExecutionerShutdown
 import com.jslambda.manager.SuperClusterManager._
 import javax.script.{Invocable, ScriptEngineManager}
+
+import scala.concurrent.duration.FiniteDuration
 
 object ScriptExecutioner {
   def props(name: String, script: String) = Props(new ScriptExecutioner(name, script))
@@ -25,21 +29,35 @@ object ScriptExecutioner {
 }
 
 class ScriptExecutioner(val uuid: String, val script: String) extends Actor with ActorLogging {
+  implicit val ec = context.dispatcher
 
   val engine = new ScriptEngineManager().getEngineByName("nashorn")
+
   engine.eval(script)
 
-  val invocable = engine.asInstanceOf[Invocable]
+  val invocable: Invocable = engine.asInstanceOf[Invocable]
 
   private var recognized = false
 
-  private val mediator = DistributedPubSub(context.system).mediator
-
   var parent: ActorRef = null
 
-  mediator ! Subscribe("cluster-bus", self)
+  private val mediator = DistributedPubSub(context.system).mediator
+
+  mediator ! Subscribe(uuid + "-bus", self)
+
+  val connectToManagerSchedule: Cancellable = context.system.scheduler.schedule(FiniteDuration(1, TimeUnit.SECONDS), FiniteDuration(1, TimeUnit.SECONDS), self, ConnectToManager())
 
   override def receive: Receive = {
+    case _: ConnectToManager =>
+      log.info("ConnectToManager")
+      if (!recognized) {
+        log.info("Publishing ExecutionerJoined: {}", ExecutionerJoined(uuid, self))
+        mediator ! Publish(uuid + "-bus", ExecutionerJoined(uuid, self))
+      } else {
+        log.info("Node recognized, shutting down scheduled task")
+        connectToManagerSchedule.cancel()
+      }
+
     case message: ExecutionerRecognized =>
       log.info("ExecutionerRecognized: {}", message)
       recognized = true
@@ -48,15 +66,8 @@ class ScriptExecutioner(val uuid: String, val script: String) extends Actor with
     case SubscribeAck(Subscribe("cluster-bus", None, `self`)) =>
       log.info("SubscribeAck")
 
-    case _: NewMemberIdentifyYourself =>
-      if (!recognized) {
-        log.info("Publishing ExecutionerJoined: {}", ExecutionerJoined(uuid, self))
-        mediator ! Publish("cluster-bus", ExecutionerJoined(uuid, self))
-      }
-
-
     case message: ManagedExecuteScript => {
-      log.info("ManagedExecuteScript: {}", message)
+      log.info("ManagedExecuteScript: {}", message.request.function)
       parent = sender
       val start = System.currentTimeMillis
       val result = invokeFunction(message.request.function, message.request.params)
@@ -71,7 +82,6 @@ class ScriptExecutioner(val uuid: String, val script: String) extends Actor with
             message.sender forward ExecutionResult(Some(value.toString))
         }
       }
-      Thread.sleep(50)
       parent ! ExecutionDone(Math.max(System.currentTimeMillis - start, 1))
     }
 

@@ -1,5 +1,0 @@
-my-thread-pool-dispatcher {
-  type = PinnedDispatcher
-  executor = "thread-pool-executor"
-
-}

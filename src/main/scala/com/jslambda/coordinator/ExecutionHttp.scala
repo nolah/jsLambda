@@ -4,6 +4,7 @@ import java.lang.invoke.MethodHandleInfo
 import java.util.UUID
 
 import akka.actor.{ActorRef, ActorSystem}
+import akka.dispatch.{Dispatcher, MessageDispatcher}
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
 import akka.http.scaladsl.model.StatusCodes.{InternalServerError, OK}
 import akka.http.scaladsl.server.Directives.{as, complete, entity, pathEndOrSingleSlash, pathPrefix, post}
@@ -18,18 +19,16 @@ import akka.pattern.ask
 import scala.util.Success
 
 
-class ExecutionHttp(coordinator: ActorRef, timeout: Timeout, materializer: ActorMaterializer) extends SprayJsonSupport {
+class ExecutionHttp(coordinator: ActorRef, timeout: Timeout, dispatcher: MessageDispatcher) extends SprayJsonSupport {
   implicit val requestTimeout: Timeout = timeout
-  implicit val actorMaterializer: ActorMaterializer = materializer
 
-
-  //  implicit def executionContext: ExecutionContextExecutor = system.dispatcher
+  implicit val blockingDispatcher = dispatcher
 
   implicit val executeExpressionFormat = jsonFormat2(ExecuteExpression)
   implicit val executeExpressionResponse = jsonFormat1(ExecuteExpressionResponse)
 
 
-  def routes: Route =  executeScriptPath
+  def routes: Route = executeScriptPath
 
 
   def executeScriptPath =
