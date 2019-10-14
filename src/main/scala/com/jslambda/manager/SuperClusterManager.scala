@@ -7,7 +7,6 @@ import java.util.{Scanner, UUID}
 import akka.actor.{Actor, ActorLogging, ActorRef, Props}
 import akka.cluster.Cluster
 import akka.cluster.ClusterEvent._
-import com.jslambda.coordinator.{RegisterScript, ScriptRegistered}
 import com.jslambda.manager.SuperClusterManager._
 
 object SuperClusterManager {
@@ -73,7 +72,6 @@ class SuperClusterManager(name: String, storageDir: String) extends Actor with A
       val subCluster = context.actorOf(SubClusterManager.props(message.uuid, message.script, message.tcpPort, message.httpPort, message.minExecutors, nodeProviderRef), message.uuid)
       subClusterManagers += (message.tcpPort -> subCluster)
       log.info("Starting ClusterManager: uuid: {}, tcpPort: {}, httpPort: {}, minExecutors: {}", message.uuid, message.tcpPort, message.httpPort, message.minExecutors)
-//      Thread.sleep(10000)
   }
 
   def readPortsFile(portsFile: File): (Int, Int) = {

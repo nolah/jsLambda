@@ -7,12 +7,10 @@ import akka.cluster.{Member, MemberStatus}
 import akka.cluster.pubsub.DistributedPubSubMediator.{Subscribe, SubscribeAck}
 import com.jslambda.coordinator.CoordinatorActor.{AdjustClusterSize, ExecutionersRemoved}
 import com.jslambda.manager.SubClusterManager._
-import com.jslambda.manager.NodeProvider.{StartCluster, StartCoordinator, StartExecutioner}
+import com.jslambda.manager.NodeProvider.{StartCoordinator, StartExecutioner}
 import com.jslambda.manager.SuperClusterManager.{CoordinatorJoined, CoordinatorRecognized, ExecutionerJoined, ExecutionerRecognized}
 import akka.pattern.{ask, pipe}
 import akka.util.Timeout
-import com.jslambda.Main
-import com.jslambda.manager.SubClusterManager.NodeState.NodeState
 import com.jslambda.manager.SubClusterManager.NodeType.NodeType
 
 import scala.concurrent.duration.FiniteDuration
@@ -57,11 +55,9 @@ class SubClusterManager(uuid: String, script: String, startingTcpPort: Int, http
 
   log.info("Starting sub cluster for uuid: {}", uuid)
   port += 1
-  //  startCoordinator(uuid, port, httpPort)
   nodeProvider ! StartCoordinator(uuid, port, httpPort)
   (0 until minExecutors) foreach (i => {
     port += 1
-    //    startExecutioner(uuid, port)
     nodeProvider ! StartExecutioner(uuid, port)
   })
 
