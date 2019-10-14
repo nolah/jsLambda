@@ -5,11 +5,8 @@ import java.nio.file.{Files, Paths, StandardOpenOption}
 import java.util.{Scanner, UUID}
 
 import akka.actor.{Actor, ActorLogging, ActorRef, Props}
-import akka.cluster.{Cluster, MemberStatus}
+import akka.cluster.Cluster
 import akka.cluster.ClusterEvent._
-import akka.cluster.pubsub.DistributedPubSub
-import akka.cluster.pubsub.DistributedPubSubMediator.{Publish, Subscribe, SubscribeAck}
-import com.jslambda.coordinator.CoordinatorActor.ExecutionerDetails
 import com.jslambda.coordinator.{RegisterScript, ScriptRegistered}
 import com.jslambda.manager.SuperClusterManager._
 
@@ -21,8 +18,6 @@ object SuperClusterManager {
 
   case class CoordinatorRecognized(uuid: String, executioners: List[ActorRef])
 
-  case class NewMemberIdentifyYourself(ninja: String)
-
   case class ExecutionerJoined(uuid: String, actorRef: ActorRef)
 
   case class ExecutionerRecognized(uuid: String)
@@ -30,7 +25,6 @@ object SuperClusterManager {
   case class RestoreSubcluster(uuid: String, script: String, startingTcpPort: Int, httpPort: Int, minExecutors: Int)
 
   case class StartSubcluster(uuid: String, script: String, tcpPort: Int, httpPort: Int, minExecutors: Int)
-
 
 }
 
@@ -96,7 +90,7 @@ class SuperClusterManager(name: String, storageDir: String) extends Actor with A
     fileWriter.write(nextTcpPort.toString)
     fileWriter.write("\n")
     fileWriter.write(nextHttpPort.toString)
-    fileWriter.close
+    fileWriter.close()
     log.info("Updated ports file: {}", portsFile.getAbsolutePath)
     (nextTcpPort + 100, nextHttpPort + 100)
   }
@@ -142,10 +136,3 @@ class SuperClusterManager(name: String, storageDir: String) extends Actor with A
   }
 
 }
-
-
-//class SystemStarter extends Actor with ActorLogging {
-//  override def receive: Receive = {
-//    case x =>
-//  }
-//}

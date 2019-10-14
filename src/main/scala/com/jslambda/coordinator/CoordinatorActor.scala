@@ -10,7 +10,7 @@ import akka.cluster.pubsub.DistributedPubSubMediator.{Publish, Subscribe, Subscr
 import com.jslambda.coordinator.CoordinatorActor._
 import com.jslambda.executioner.ScriptExecutioner.{ExecutionDone, ManagedExecuteScript}
 import com.jslambda.manager.SubClusterManager.RemoveExecs
-import com.jslambda.manager.SuperClusterManager.{CoordinatorJoined, CoordinatorRecognized, ExecutionerJoined, NewMemberIdentifyYourself}
+import com.jslambda.manager.SuperClusterManager.{CoordinatorJoined, CoordinatorRecognized, ExecutionerJoined}
 
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
@@ -118,12 +118,6 @@ class CoordinatorActor(name: String, uuid: String) extends Actor with ActorLoggi
 
     case SubscribeAck(Subscribe("cluster-bus", None, `self`)) =>
       log.info("SubscribeAck")
-
-    case _: NewMemberIdentifyYourself =>
-      if (!recognized) {
-        log.info("Publishing CoordinatorJoined: {}", CoordinatorJoined(uuid, self))
-        mediator ! Publish("cluster-bus", CoordinatorJoined(uuid, self))
-      }
 
     case message: ExecutionerJoined =>
       log.info("ExecutionerJoined: {}", message)
