@@ -1,9 +1,8 @@
 package com.jslambda.executioner
 
-import java.time.ZonedDateTime
 import java.util.concurrent.TimeUnit
 
-import akka.actor.{Actor, ActorLogging, ActorRef, Cancellable, Props}
+import akka.actor.{Actor, ActorLogging, ActorRef, Cancellable, PoisonPill, Props}
 import akka.cluster.Cluster
 import akka.cluster.pubsub.DistributedPubSub
 import akka.cluster.pubsub.DistributedPubSubMediator.{Publish, Subscribe, SubscribeAck}
@@ -45,21 +44,23 @@ class ScriptExecutioner(val uuid: String, val script: String) extends Actor with
 
   mediator ! Subscribe(uuid + "-bus", self)
 
-  val connectToManagerSchedule: Cancellable = context.system.scheduler.schedule(FiniteDuration(1, TimeUnit.SECONDS), FiniteDuration(1, TimeUnit.SECONDS), self, ConnectToManager())
+  val connectToManagerSchedule: Cancellable = context.system.scheduler.schedule(FiniteDuration(2, TimeUnit.SECONDS), FiniteDuration(1, TimeUnit.SECONDS), self, ConnectToManager())
+  var connectionAttempts = 0
 
   override def receive: Receive = {
     case _: ConnectToManager =>
-      log.info("ConnectToManager")
+      connectionAttempts += 1
+      log.info("SUBCLUSTER: {}| ConnectToManager by executioner", uuid)
       if (!recognized) {
-        log.info("Publishing ExecutionerJoined: {}", ExecutionerJoined(uuid, self))
+        log.info("SUBCLUSTER: {}| Publishing ExecutionerJoined: {}", uuid, ExecutionerJoined(uuid, self))
         mediator ! Publish(uuid + "-bus", ExecutionerJoined(uuid, self))
       } else {
-        log.info("Node recognized, shutting down scheduled task")
+        log.info("SUBCLUSTER: {}| Executioner node recognized, shutting down scheduled task", uuid)
         connectToManagerSchedule.cancel()
       }
 
     case message: ExecutionerRecognized =>
-      log.info("ExecutionerRecognized: {}", message)
+      log.info("SUBCLUSTER: {}| ExecutionerRecognized: {}", uuid, message)
       recognized = true
 
 
@@ -68,28 +69,33 @@ class ScriptExecutioner(val uuid: String, val script: String) extends Actor with
 
     case message: ManagedExecuteScript => {
       log.info("ManagedExecuteScript: {}", message.request.function)
-      parent = sender
-      val start = System.currentTimeMillis
-      val result = invokeFunction(message.request.function, message.request.params)
-      if (result == null) {
-        sender forward ExecutionResult(Some(null))
+      if (Array("kill_executioner").contains(message.request.function)) {
+        val cluster = Cluster(context.system)
+        cluster.leave(cluster.selfAddress)
       } else {
-        result match {
-          case array: Array[Int] =>
-            val asString = array.mkString(",")
-            message.sender forward ExecutionResult(Some(s"[$asString]"))
-          case value =>
-            message.sender forward ExecutionResult(Some(value.toString))
+        parent = sender
+        val start = System.currentTimeMillis
+        val result = invokeFunction(message.request.function, message.request.params)
+        if (result == null) {
+          sender forward ExecutionResult(Some(null))
+        } else {
+          result match {
+            case array: Array[Integer] =>
+              val asString = array.mkString(",")
+              message.sender forward ExecutionResult(Some(s"[$asString]"))
+            case value =>
+              message.sender forward ExecutionResult(Some(value.toString))
+          }
         }
+        parent ! ExecutionDone(Math.max(System.currentTimeMillis - start, 1))
       }
-      parent ! ExecutionDone(Math.max(System.currentTimeMillis - start, 1))
     }
 
     case message: ExecutionerShutdown =>
-      log.info("ExecutionerShutdown: {}", message)
+      log.info("SUBCLUSTER: {}| ExecutionerShutdown: {}", uuid, message)
       val cluster = Cluster(context.system)
       cluster.leave(cluster.selfAddress)
-    //      context.system.terminate()
+    //      self ! PoisonPill
   }
 
   def invokeFunction(function: String, params: String): Object = {

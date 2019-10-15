@@ -30,7 +30,7 @@ object Coordinator {
         throw new RuntimeException("No http-port found while starting coordinator, shutting down!")
     }
 
-    log.info("Starting coordinator with uuid: {}", uuid)
+    log.info("SUBCLUSTER: {}| Starting coordinator ", uuid)
 
     val coordinatorActor = system.actorOf(CoordinatorActor.props("coordinator-actor", uuid), "coordinator-actor")
 
@@ -44,9 +44,6 @@ object Coordinator {
     // status check
     system.scheduler.schedule(interval, interval, coordinatorActor, CheckStatus())
 
-    //    val api = new ExecutionHttp(coordinatorActor, interval, materializer)
-
-    //    val bindingFuture: Future[ServerBinding] =
     Http().bindAndHandle(api.routes, "localhost", httpPort)
     log.info("Starting coordinator on port: {}", httpPort)
 

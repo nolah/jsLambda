@@ -18,7 +18,7 @@ object Executioner {
         throw new RuntimeException("No uuid found while starting executioner, shutting down!")
     }
 
-    log.info("Starting executioner with uuid: {}", uuid)
+    log.info("SUBCLUSTER: {}| Starting executioner", uuid)
 
     val script = new String(Files.readAllBytes(Paths.get(storageDir + uuid + ".script")))
     system.actorOf(ScriptExecutioner.props(uuid, script), "executioner-actor")

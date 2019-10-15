@@ -2,33 +2,30 @@ package com.jslambda.manager
 
 import akka.actor.{Actor, ActorLogging, Props}
 import com.jslambda.Main
-import com.jslambda.manager.NodeProvider.{StartCoordinator, StartExecutioner}
-import com.jslambda.manager.SubClusterManager.AddNewExecutioners
+import com.jslambda.manager.NodeProvider.{StartCoordinatorNode, StartExecutionerNode}
 
 object NodeProvider {
   def props() = Props(new NodeProvider())
 
   case class StartCluster(minExecutors: Int, uuid: String)
 
-  case class StartExecutioner(uuid: String, tcpPort: Int)
+  case class StartExecutionerNode(uuid: String, tcpPort: Int)
 
-  case class StartCoordinator(uuid: String, tcpPort: Int, httpPort: Int)
-
+  case class StartCoordinatorNode(uuid: String, tcpPort: Int, httpPort: Int)
 
   class ClusterStarting
-
 }
 
 class NodeProvider() extends Actor with ActorLogging {
 
 
   override def receive: Receive = {
-    case message: StartExecutioner =>
+    case message: StartExecutionerNode =>
+      log.info("SUBCLUSTER: {}| StartExecutionerNode: {}", message.uuid, message)
       startExecutioner(message.uuid, message.tcpPort)
-    case message: StartCoordinator =>
+    case message: StartCoordinatorNode =>
+      log.info("SUBCLUSTER: {}| StartCoordinator: {}", message.uuid, message)
       startCoordinator(message.uuid, message.tcpPort, message.httpPort)
-
-
   }
 
   def startExecutioner(uuid: String, port: Int): Unit = {

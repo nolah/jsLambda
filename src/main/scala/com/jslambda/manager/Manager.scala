@@ -4,7 +4,6 @@ import akka.actor.ActorSystem
 import akka.event.LoggingAdapter
 import akka.http.scaladsl.Http
 import akka.stream.ActorMaterializer
-import com.jslambda.coordinator.RegistrationHttp
 
 import scala.concurrent.duration.FiniteDuration
 
